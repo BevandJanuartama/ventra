@@ -14,7 +14,6 @@ import {
   Wheat,
   Droplet,
   SlidersHorizontal,
-  Calculator,
 } from "lucide-react";
 
 interface FoodLog {
@@ -106,13 +105,24 @@ export default function CaloriesPage() {
         setTargetCalories(customTarget);
       }
 
-      // Ambil riwayat makanan hari ini
-      const todayStr = new Date().toISOString().split("T")[0];
+      // Hitung awal hari (00:00:00 lokal)
+      const now = new Date();
+      const startOfToday = new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        0,
+        0,
+        0,
+        0,
+      ).toISOString();
+
+      // Ambil riwayat makanan HANYA sejak jam 00:00:00 hari ini
       const { data } = await supabase
         .from("food_logs")
         .select("*")
         .eq("user_id", user.id)
-        .gte("logged_at", todayStr)
+        .gte("logged_at", startOfToday)
         .order("created_at", { ascending: false });
 
       if (data) setFoodLogs(data);
@@ -497,7 +507,7 @@ export default function CaloriesPage() {
                         gender: e.target.value as any,
                       })
                     }
-                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2 py-1.5 text-xs focus:outline-hidden"
+                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2.5 py-1.5 text-xs focus:outline-hidden"
                   >
                     <option value="male">Laki-laki</option>
                     <option value="female">Perempuan</option>
@@ -689,7 +699,7 @@ export default function CaloriesPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, protein: e.target.value })
                     }
-                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2 py-1.5 text-xs focus:outline-hidden"
+                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2.5 py-1.5 text-xs focus:outline-hidden"
                   />
                 </div>
                 <div>
@@ -703,7 +713,7 @@ export default function CaloriesPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, carbs: e.target.value })
                     }
-                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2 py-1.5 text-xs focus:outline-hidden"
+                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2.5 py-1.5 text-xs focus:outline-hidden"
                   />
                 </div>
                 <div>
@@ -717,7 +727,7 @@ export default function CaloriesPage() {
                     onChange={(e) =>
                       setFormData({ ...formData, fat: e.target.value })
                     }
-                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2 py-1.5 text-xs focus:outline-hidden"
+                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2.5 py-1.5 text-xs focus:outline-hidden"
                   />
                 </div>
               </div>
