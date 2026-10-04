@@ -16,6 +16,8 @@ import {
   RotateCcw,
   ChevronLeft,
   ChevronRight,
+  Clock,
+  Wallet,
 } from "lucide-react";
 
 interface Transaction {
@@ -34,37 +36,46 @@ export default function FinancePage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [budgetAmount, setBudgetAmount] = useState<number>(0);
   const [tempBudgetInput, setTempBudgetInput] = useState<string>("");
+
+  // State Saldo Awal
+  const [initialBalance, setInitialBalance] = useState<number>(0);
+  const [tempInitialBalanceInput, setTempInitialBalanceInput] =
+    useState<string>("");
+
   const [loading, setLoading] = useState(true);
   const [filterType, setFilterType] = useState<"all" | "expense" | "income">(
     "all",
   );
 
-  // State Waktu / Periode Bulan Budget (Format: YYYY-MM)
   const [selectedMonth, setSelectedMonth] = useState<string>(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   });
 
-  // Date Filter State untuk Riwayat
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
-  // Modals state
+  // Modals
   const [showManualModal, setShowManualModal] = useState(false);
   const [showScanModal, setShowScanModal] = useState(false);
   const [showBudgetModal, setShowBudgetModal] = useState(false);
+  const [showInitialBalanceModal, setShowInitialBalanceModal] = useState(false);
 
-  // Form State
+  const getCurrentDateTimeInput = () => {
+    const now = new Date();
+    const tzOffset = now.getTimezoneOffset() * 60000;
+    return new Date(now.getTime() - tzOffset).toISOString().slice(0, 16);
+  };
+
   const [formData, setFormData] = useState({
     type: "expense" as "expense" | "income",
     amount: "",
     category: "Food & Drink",
     merchant: "",
     description: "",
-    date: new Date().toISOString().split("T")[0],
+    date: getCurrentDateTimeInput(),
   });
 
-  // AI Scan State
   const [scanFile, setScanFile] = useState<File | null>(null);
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState("");
@@ -76,7 +87,7 @@ export default function FinancePage() {
     } = await supabase.auth.getUser();
 
     if (user) {
-      // 1. Fetch Semua Transaksi
+      // 1. Fetch Transaksi
       const { data: transData } = await supabase
         .from("transactions")
         .select("*")
@@ -85,15 +96,15 @@ export default function FinancePage() {
 
       if (transData) setTransactions(transData);
 
-      // 2. Fetch Budget khusus untuk BULAN yang sedang dipilih (selectedMonth)
-      const { data: bData, error: bError } = await supabase
+      // 2. Fetch Budget Bulan Dipilih
+      const { data: bData } = await supabase
         .from("budgets")
         .select("amount")
         .eq("user_id", user.id)
         .eq("month", selectedMonth)
         .limit(1);
 
-      if (!bError && bData && bData.length > 0) {
+      if (bData && bData.length > 0) {
         const val = Number(bData[0].amount) || 0;
         setBudgetAmount(val);
         setTempBudgetInput(val > 0 ? String(val) : "");
@@ -101,22 +112,36 @@ export default function FinancePage() {
         setBudgetAmount(0);
         setTempBudgetInput("");
       }
+
+      // 3. Fetch Saldo Awal User
+      const { data: initData } = await supabase
+        .from("user_settings")
+        .select("initial_balance")
+        .eq("user_id", user.id)
+        .limit(1);
+
+      if (initData && initData.length > 0) {
+        const initVal = Number(initData[0].initial_balance) || 0;
+        setInitialBalance(initVal);
+        setTempInitialBalanceInput(initVal > 0 ? String(initVal) : "");
+      } else {
+        setInitialBalance(0);
+        setTempInitialBalanceInput("");
+      }
     }
     setLoading(false);
   };
 
   useEffect(() => {
     fetchData();
-  }, [selectedMonth]); // Refresh saat bulan diubah
+  }, [selectedMonth]);
 
-  // Format Nama Bulan untuk UI (contoh: "Agustus 2026")
   const formatMonthDisplay = (monthStr: string) => {
     const [year, month] = monthStr.split("-");
     const date = new Date(Number(year), Number(month) - 1, 1);
     return date.toLocaleDateString("id-ID", { month: "long", year: "numeric" });
   };
 
-  // Navigasi Ganti Bulan
   const handlePrevMonth = () => {
     const [y, m] = selectedMonth.split("-").map(Number);
     const prevDate = new Date(y, m - 2, 1);
@@ -133,7 +158,7 @@ export default function FinancePage() {
     );
   };
 
-  // Perhitungan Saldo Keseluruhan Kumulatif (All Time)
+  // --- PERHITUNGAN KEUANGAN ---
   const allTimeIncome = transactions
     .filter((t) => t.type === "income")
     .reduce((acc, curr) => acc + Number(curr.amount), 0);
@@ -142,9 +167,10 @@ export default function FinancePage() {
     .filter((t) => t.type === "expense")
     .reduce((acc, curr) => acc + Number(curr.amount), 0);
 
-  const totalNetBalance = allTimeIncome - allTimeExpense;
+  // Total Saldo Akun Kumulatif = Saldo Awal + Total Masuk - Total Keluar
+  const totalNetBalance = initialBalance + allTimeIncome - allTimeExpense;
 
-  // PERHITUNGAN KHUSUS BULAN INI (Untuk Progress Budget yang Presisi)
+  // Arus Kas Murni Bulan Ini
   const monthlyExpense = transactions
     .filter((t) => t.type === "expense" && t.date.startsWith(selectedMonth))
     .reduce((acc, curr) => acc + Number(curr.amount), 0);
@@ -153,20 +179,60 @@ export default function FinancePage() {
     .filter((t) => t.type === "income" && t.date.startsWith(selectedMonth))
     .reduce((acc, curr) => acc + Number(curr.amount), 0);
 
+  // Selisih Bersih Arus Kas Bulanan
+  const netBalance = monthlyIncome - monthlyExpense;
+
+  const netExpense = Math.max(0, monthlyExpense - monthlyIncome);
+
   const budgetLeft =
-    budgetAmount > 0 ? Math.max(0, budgetAmount - monthlyExpense) : 0;
+    budgetAmount > 0 ? Math.max(0, budgetAmount - netExpense) : 0;
+
   const percentageUsed =
     budgetAmount > 0
-      ? Math.min(100, Math.round((monthlyExpense / budgetAmount) * 100))
+      ? Math.min(100, Math.round((netExpense / budgetAmount) * 100))
       : 0;
 
-  // Filter List Transaksi di Bagian Bawah
+  // Filter List Transaksi
   const filteredTransactions = transactions.filter((t) => {
     const matchesType = filterType === "all" || t.type === filterType;
-    const matchesStart = !startDate || t.date >= startDate;
-    const matchesEnd = !endDate || t.date <= endDate;
+    const tDateOnly = t.date.split("T")[0];
+    const matchesStart = !startDate || tDateOnly >= startDate;
+    const matchesEnd = !endDate || tDateOnly <= endDate;
     return matchesType && matchesStart && matchesEnd;
   });
+
+  // Group Transaksi per Tanggal
+  const groupedTransactions = filteredTransactions.reduce(
+    (groups, transaction) => {
+      const dateKey = transaction.date.split("T")[0];
+      if (!groups[dateKey]) {
+        groups[dateKey] = [];
+      }
+      groups[dateKey].push(transaction);
+      return groups;
+    },
+    {} as Record<string, Transaction[]>,
+  );
+
+  const sortedDateKeys = Object.keys(groupedTransactions).sort(
+    (a, b) => new Date(b).getTime() - new Date(a).getTime(),
+  );
+
+  const formatDateHeader = (dateStr: string) => {
+    const [year, month, day] = dateStr.split("-").map(Number);
+    const date = new Date(year, month - 1, day);
+    return date.toLocaleDateString("id-ID", {
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+  };
+
+  const formatTimeOnly = (dateStr: string) => {
+    if (!dateStr.includes("T")) return "";
+    const timePart = dateStr.split("T")[1];
+    return timePart.substring(0, 5);
+  };
 
   const handleSaveTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -195,13 +261,12 @@ export default function FinancePage() {
         category: "Food & Drink",
         merchant: "",
         description: "",
-        date: new Date().toISOString().split("T")[0],
+        date: getCurrentDateTimeInput(),
       });
       fetchData();
     }
   };
 
-  // Simpan Budget Spesifik Bulan yang Dipilih
   const handleUpdateBudget = async (e: React.FormEvent) => {
     e.preventDefault();
     const {
@@ -212,7 +277,6 @@ export default function FinancePage() {
     const newAmount = Number(tempBudgetInput) || 0;
     setBudgetAmount(newAmount);
 
-    // Cek apakah data budget user di bulan tersebut sudah ada
     const { data: existing } = await supabase
       .from("budgets")
       .select("id")
@@ -240,6 +304,40 @@ export default function FinancePage() {
     setShowBudgetModal(false);
   };
 
+  // Simpan/Update Saldo Awal
+  const handleUpdateInitialBalance = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+
+    const newAmount = Number(tempInitialBalanceInput) || 0;
+    setInitialBalance(newAmount);
+
+    const { data: existing } = await supabase
+      .from("user_settings")
+      .select("id")
+      .eq("user_id", user.id)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      await supabase
+        .from("user_settings")
+        .update({ initial_balance: newAmount })
+        .eq("user_id", user.id);
+    } else {
+      await supabase.from("user_settings").insert([
+        {
+          user_id: user.id,
+          initial_balance: newAmount,
+        },
+      ]);
+    }
+
+    setShowInitialBalanceModal(false);
+  };
+
   const handleDeleteTransaction = async (id: string) => {
     await supabase.from("transactions").delete().eq("id", id);
     setTransactions((prev) => prev.filter((t) => t.id !== id));
@@ -264,13 +362,17 @@ export default function FinancePage() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || "Gagal scan struk");
 
+      const scannedDate = json.data.date
+        ? `${json.data.date}T${new Date().toTimeString().substring(0, 5)}`
+        : getCurrentDateTimeInput();
+
       setFormData({
         type: "expense",
         amount: String(json.data.total || ""),
         category: json.data.category || "Food & Drink",
         merchant: json.data.merchant || "",
         description: json.data.description || "Scan Struk Otomatis",
-        date: json.data.date || new Date().toISOString().split("T")[0],
+        date: scannedDate,
       });
 
       setShowScanModal(false);
@@ -284,7 +386,7 @@ export default function FinancePage() {
 
   return (
     <div className="space-y-4">
-      {/* Header Finance & Pengatur Bulan */}
+      {/* Header Finance & Pengatur Modal */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="font-serif text-2xl font-normal text-[#151515]">
@@ -294,16 +396,30 @@ export default function FinancePage() {
             Total saldo & budgeting berkala
           </p>
         </div>
-        <button
-          onClick={() => {
-            setTempBudgetInput(budgetAmount > 0 ? String(budgetAmount) : "");
-            setShowBudgetModal(true);
-          }}
-          className="flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-xs transition hover:bg-neutral-50"
-        >
-          <SlidersHorizontal size={13} />
-          Atur Budget
-        </button>
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => {
+              setTempInitialBalanceInput(
+                initialBalance > 0 ? String(initialBalance) : "",
+              );
+              setShowInitialBalanceModal(true);
+            }}
+            className="flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-xs transition hover:bg-neutral-50"
+          >
+            <Wallet size={13} />
+            Saldo Awal
+          </button>
+          <button
+            onClick={() => {
+              setTempBudgetInput(budgetAmount > 0 ? String(budgetAmount) : "");
+              setShowBudgetModal(true);
+            }}
+            className="flex items-center gap-1.5 rounded-full border border-neutral-200 bg-white px-3 py-1.5 text-xs font-medium text-neutral-700 shadow-xs transition hover:bg-neutral-50"
+          >
+            <SlidersHorizontal size={13} />
+            Atur Budget
+          </button>
+        </div>
       </div>
 
       {/* Month Navigator Toolbar */}
@@ -330,7 +446,7 @@ export default function FinancePage() {
         </button>
       </div>
 
-      {/* Main Forest Green Card (Berbasis Waktu Bulan Ini) */}
+      {/* Main Card */}
       <div className="relative overflow-hidden rounded-2xl bg-[#1C3627] p-4 text-white shadow-lg shadow-[#1C3627]/10">
         <div className="flex items-start justify-between">
           <div>
@@ -340,6 +456,11 @@ export default function FinancePage() {
             <div className="mt-0.5 font-serif text-2xl font-medium tracking-tight">
               Rp {totalNetBalance.toLocaleString("id-ID")}
             </div>
+            {initialBalance > 0 && (
+              <div className="text-[9px] text-emerald-200/60 mt-0.5">
+                Termasuk Saldo Awal: Rp {initialBalance.toLocaleString("id-ID")}
+              </div>
+            )}
           </div>
           <div className="text-right">
             <span className="rounded-full bg-white/10 px-2 py-0.5 text-[10px] font-medium text-emerald-200">
@@ -363,25 +484,39 @@ export default function FinancePage() {
           />
         </div>
 
-        {/* Ringkasan Arus Kas Khusus Bulan Ini */}
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          <div className="rounded-xl bg-white/[0.07] px-3 py-2 border border-white/5">
-            <div className="flex items-center gap-1 text-[10px] text-emerald-200/70">
-              <ArrowDownLeft size={11} />
-              <span>Masuk ({selectedMonth})</span>
+        {/* Ringkasan Arus Kas & Selisih Net Balance */}
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="rounded-xl bg-white/[0.07] px-2.5 py-2 border border-white/5">
+            <div className="flex items-center gap-1 text-[9px] text-emerald-200/70">
+              <ArrowDownLeft size={10} />
+              <span>Masuk</span>
             </div>
-            <div className="font-serif text-xs font-medium mt-0.5">
+            <div className="font-serif text-[11px] font-medium mt-0.5 truncate">
               Rp {monthlyIncome.toLocaleString("id-ID")}
             </div>
           </div>
 
-          <div className="rounded-xl bg-white/[0.07] px-3 py-2 border border-white/5">
-            <div className="flex items-center gap-1 text-[10px] text-rose-200/70">
-              <ArrowUpRight size={11} />
-              <span>Keluar ({selectedMonth})</span>
+          <div className="rounded-xl bg-white/[0.07] px-2.5 py-2 border border-white/5">
+            <div className="flex items-center gap-1 text-[9px] text-rose-200/70">
+              <ArrowUpRight size={10} />
+              <span>Keluar</span>
             </div>
-            <div className="font-serif text-xs font-medium mt-0.5">
+            <div className="font-serif text-[11px] font-medium mt-0.5 truncate">
               Rp {monthlyExpense.toLocaleString("id-ID")}
+            </div>
+          </div>
+
+          <div className="rounded-xl bg-white/[0.07] px-2.5 py-2 border border-white/5">
+            <div className="flex items-center gap-1 text-[9px] text-amber-200/70">
+              <span>Selisih (Net)</span>
+            </div>
+            <div
+              className={`font-serif text-[11px] font-medium mt-0.5 truncate ${
+                netBalance >= 0 ? "text-emerald-300" : "text-rose-300"
+              }`}
+            >
+              {netBalance >= 0 ? "+" : "-"} Rp{" "}
+              {Math.abs(netBalance).toLocaleString("id-ID")}
             </div>
           </div>
         </div>
@@ -400,7 +535,7 @@ export default function FinancePage() {
             <div className="text-xs font-bold text-neutral-800">
               Scan receipt
             </div>
-            <div className="text-[9px] text-neutral-400">Gemini AI OCR</div>
+            <div className="text-[9px] text-neutral-400">AI Camera</div>
           </div>
         </button>
 
@@ -498,59 +633,80 @@ export default function FinancePage() {
           <div className="py-8 text-center text-xs text-neutral-400">
             Memuat transaksi...
           </div>
-        ) : filteredTransactions.length === 0 ? (
+        ) : sortedDateKeys.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-neutral-200 p-8 text-center text-xs text-neutral-400">
             Tidak ada transaksi pada periode atau filter ini.
           </div>
         ) : (
-          <div className="space-y-1.5">
-            {filteredTransactions.map((item) => (
-              <div
-                key={item.id}
-                className="group flex items-center justify-between rounded-xl bg-white p-3 shadow-xs border border-neutral-200/60"
-              >
-                <div className="flex items-center gap-2.5">
-                  <div
-                    className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-semibold ${
-                      item.type === "income"
-                        ? "bg-emerald-50 text-emerald-700"
-                        : "bg-neutral-100 text-neutral-700"
-                    }`}
-                  >
-                    {item.type === "income" ? (
-                      <ArrowDownLeft size={15} />
-                    ) : (
-                      <Receipt size={15} />
-                    )}
-                  </div>
-                  <div>
-                    <div className="text-xs font-semibold text-neutral-800">
-                      {item.merchant || item.category}
-                    </div>
-                    <div className="text-[10px] text-neutral-400">
-                      {item.date}{" "}
-                      {item.description ? `• ${item.description}` : ""}
-                    </div>
-                  </div>
+          <div className="space-y-4">
+            {sortedDateKeys.map((dateKey) => (
+              <div key={dateKey} className="space-y-1.5">
+                <div className="sticky top-0 z-10 bg-[#FBFBF9]/90 py-1 backdrop-blur-xs">
+                  <span className="text-[11px] font-semibold text-neutral-500">
+                    {formatDateHeader(dateKey)}
+                  </span>
                 </div>
 
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className={`font-serif text-xs font-medium ${
-                      item.type === "income"
-                        ? "text-emerald-600"
-                        : "text-neutral-900"
-                    }`}
-                  >
-                    {item.type === "income" ? "+" : "-"} Rp{" "}
-                    {Number(item.amount).toLocaleString("id-ID")}
-                  </span>
-                  <button
-                    onClick={() => handleDeleteTransaction(item.id)}
-                    className="text-neutral-300 opacity-0 transition group-hover:opacity-100 hover:text-rose-500"
-                  >
-                    <Trash2 size={13} />
-                  </button>
+                <div className="space-y-1.5">
+                  {groupedTransactions[dateKey].map((item) => (
+                    <div
+                      key={item.id}
+                      className="group flex items-center justify-between rounded-xl bg-white p-3 shadow-xs border border-neutral-200/60"
+                    >
+                      <div className="flex items-center gap-2.5">
+                        <div
+                          className={`flex h-8 w-8 items-center justify-center rounded-lg text-xs font-semibold ${
+                            item.type === "income"
+                              ? "bg-emerald-50 text-emerald-700"
+                              : "bg-neutral-100 text-neutral-700"
+                          }`}
+                        >
+                          {item.type === "income" ? (
+                            <ArrowDownLeft size={15} />
+                          ) : (
+                            <Receipt size={15} />
+                          )}
+                        </div>
+                        <div>
+                          <div className="text-xs font-semibold text-neutral-800">
+                            {item.merchant || item.category}
+                          </div>
+                          <div className="text-[10px] text-neutral-400 flex items-center gap-1">
+                            {formatTimeOnly(item.date) && (
+                              <span className="flex items-center gap-0.5 text-emerald-800 font-medium">
+                                <Clock size={10} />
+                                {formatTimeOnly(item.date)}
+                              </span>
+                            )}
+                            <span>
+                              {formatTimeOnly(item.date) ? "•" : ""}{" "}
+                              {item.category}
+                              {item.description ? ` • ${item.description}` : ""}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2.5">
+                        <span
+                          className={`font-serif text-xs font-medium ${
+                            item.type === "income"
+                              ? "text-emerald-600"
+                              : "text-neutral-900"
+                          }`}
+                        >
+                          {item.type === "income" ? "+" : "-"} Rp{" "}
+                          {Number(item.amount).toLocaleString("id-ID")}
+                        </span>
+                        <button
+                          onClick={() => handleDeleteTransaction(item.id)}
+                          className="text-neutral-300 opacity-0 transition group-hover:opacity-100 hover:text-rose-500"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ))}
@@ -618,7 +774,7 @@ export default function FinancePage() {
         </div>
       )}
 
-      {/* MODAL 2: MANUAL / REVIEW FORM */}
+      {/* MODAL 2: MANUAL FORM */}
       {showManualModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl border border-neutral-100">
@@ -714,16 +870,16 @@ export default function FinancePage() {
                 </div>
                 <div>
                   <label className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
-                    Tanggal
+                    Waktu & Tanggal
                   </label>
                   <input
-                    type="date"
+                    type="datetime-local"
                     required
                     value={formData.date}
                     onChange={(e) =>
                       setFormData({ ...formData, date: e.target.value })
                     }
-                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2 py-1.5 text-xs focus:outline-hidden"
+                    className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-1.5 py-1.5 text-[11px] focus:outline-hidden"
                   />
                 </div>
               </div>
@@ -754,7 +910,7 @@ export default function FinancePage() {
         </div>
       )}
 
-      {/* MODAL 3: ATUR BUDGET BULANAN DENGAN PEMILIH PERIODE */}
+      {/* MODAL 3: ATUR BUDGET */}
       {showBudgetModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
           <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl border border-neutral-100">
@@ -803,6 +959,52 @@ export default function FinancePage() {
                 className="w-full rounded-lg bg-[#1C3627] py-2 text-xs font-semibold text-white transition hover:bg-[#152a1e]"
               >
                 Simpan Budget {formatMonthDisplay(selectedMonth)}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: ATUR SALDO AWAL */}
+      {showInitialBalanceModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-2xl bg-white p-5 shadow-2xl border border-neutral-100">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-serif text-base font-medium text-neutral-900">
+                Atur Saldo Awal
+              </h3>
+              <button
+                onClick={() => setShowInitialBalanceModal(false)}
+                className="text-neutral-400 hover:text-neutral-700"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <form onSubmit={handleUpdateInitialBalance} className="space-y-3">
+              <div>
+                <label className="text-[10px] font-semibold text-neutral-500 uppercase tracking-wider">
+                  Saldo/Modal Awal Saat Ini (Rp)
+                </label>
+                <input
+                  type="number"
+                  required
+                  placeholder="Contoh: 1000000"
+                  value={tempInitialBalanceInput}
+                  onChange={(e) => setTempInitialBalanceInput(e.target.value)}
+                  className="w-full rounded-lg border border-neutral-200 bg-neutral-50/50 px-2.5 py-1.5 text-sm font-serif font-medium focus:outline-hidden mt-1"
+                />
+                <p className="text-[10px] text-neutral-400 mt-1">
+                  Saldo awal ini akan ditambahkan ke total saldo akun tanpa
+                  mengganggu riwayat pemasukan bulanan.
+                </p>
+              </div>
+
+              <button
+                type="submit"
+                className="w-full rounded-lg bg-[#1C3627] py-2 text-xs font-semibold text-white transition hover:bg-[#152a1e]"
+              >
+                Simpan Saldo Awal
               </button>
             </form>
           </div>

@@ -83,11 +83,14 @@ export default async function DashboardPage() {
     Number(budgetRes.data?.[0]?.amount) ||
     Number(user?.user_metadata?.monthly_budget) ||
     0;
+  const netExpense = Math.max(0, allTimeExpense - allTimeIncome);
+
   const budgetLeft =
-    budgetAmount > 0 ? Math.max(0, budgetAmount - allTimeExpense) : 0;
+    budgetAmount > 0 ? Math.max(0, budgetAmount - netExpense) : 0;
+
   const budgetPercentageUsed =
     budgetAmount > 0
-      ? Math.min(100, Math.round((allTimeExpense / budgetAmount) * 100))
+      ? Math.min(100, Math.round((netExpense / budgetAmount) * 100))
       : 0;
 
   // 2. DATA KALORI
